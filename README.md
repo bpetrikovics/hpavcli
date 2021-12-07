@@ -1,5 +1,8 @@
 # hpavcli - Powerline (HomePlug AV) Utility
 
+
+[![CodeQL](https://github.com/bpetrikovics/shelly-ota/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/bpetrikovics/hpavcli/actions/workflows/codeql-analysis.yml)
+
 hpavcli is a command line utility to communicate with Powerline (HPAV) devices from various brands, written in Python.
 
 It all began when I bought a pair of Powerline adapters, and wanted to be able to monitor them, keep an eye on the

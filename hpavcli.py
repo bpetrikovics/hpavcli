@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 
-"""
-    https://docbox.etsi.org/Reference/homeplug_av21/homeplug_av21_specification_final_public.pdf
-    https://github.com/serock/pla-util/wiki
-    https://docs.rs/crate/powerline/0.1.0/source/
-"""
-
-
-import sys, os
+import os
+import sys
 import argparse
 
 from interface import *
@@ -73,6 +67,7 @@ if __name__ == "__main__":
     sys.path.append(app_dir)
 
     from venvtools import activate
+
     activate(app_dir)
 
     args = parse_args()

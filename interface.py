@@ -1,6 +1,5 @@
 import socket
 import time
-from typing import List
 
 import netifaces
 
@@ -76,13 +75,15 @@ class PowerlineInterface():
         self.socket.settimeout(oldtimeout)
         return received
 
-    def _hpav_discover(self) -> List[MacAddress]:
-        """ Send CC_DISCOVER_LIST.REQ to broadcast address, and wait for CC_DISCOVER_LIST.CNF responses """
+    def _hpav_discover(self, target: MacAddress = MacAddress("FF:FF:FF:FF:FF:FF")) -> List[PowerlineDevice]:
+        """ Send CC_DISCOVER_LIST.REQ and wait for CC_DISCOVER_LIST.CNF responses
+            If target not specified, send a broadcast request which will receive one response packet from
+            each HPAV device on the network """
 
         sta_info_size = 12
         network_info_size = 13
 
-        packet = ManagementMessage(MacAddress("FF:FF:FF:FF:FF:FF"), self.interface_mac)
+        packet = ManagementMessage(target, self.interface_mac)
         packet.mmtype = MMType.CC_DISCOVER_LIST.value
 
         received = self._request(packet)
@@ -95,14 +96,14 @@ class PowerlineInterface():
 
             for sta in range(num_sta):
                 sta_data = packet.mmentry[1 + sta * sta_info_size:1 + (sta + 1) * sta_info_size]
-                dev.add_station(HPAVStationInfo.from_bytes(sta_data))
+                dev.add_station(HPAVDiscoverStationInfo.from_bytes(sta_data))
 
             pointer = 1 + num_sta * sta_info_size
             num_nets = packet.mmentry[pointer]
 
             for net in range(num_nets):
                 net_data = packet.mmentry[pointer + net * network_info_size:pointer + (net + 1) * network_info_size]
-                dev.add_net(HPAVNetworkInfo.from_bytes(net_data))
+                dev.add_net(HPAVDiscoverNetworkInfo.from_bytes(net_data))
 
             dev.interface = self
             found_list.append(dev)
@@ -110,7 +111,9 @@ class PowerlineInterface():
         return found_list
 
     def _hpav_station_caps(self, device: PowerlineDevice):
-        """ CM_STA_CAP can be used to identify device vendor/OUI for further, vendor specific requests """
+        """ CM_STA_CAP can be used to identify device vendor/OUI for further, vendor specific requests
+            This method will inject OUI and HPAV Version information into the device """
+
         packet = ManagementMessage(device.mac, self.interface_mac)
         packet.mmtype = MMType.CM_STA_CAP.value
 
@@ -125,7 +128,10 @@ class PowerlineInterface():
             device.oui = caps.oui
             device.hpav_version = caps.avversion
 
-    def _hpav_network_stats(self, device: PowerlineDevice):
+    def _hpav_network_stats(self, device: PowerlineDevice) -> List[HPAVNetworkStats]:
+        """ CM_NW_STATS for generic network statistics including up/down rates
+            Could be sent to broadcast MAC, but in that case only connected devices would respond (e.g. that have
+            existing network), so cannot be used for device discovery alone. """
 
         stat_info_size = 10
 
@@ -135,22 +141,24 @@ class PowerlineInterface():
 
         received = self._request(packet)
 
+        networks = list()
         for packet in received:
             num_sta = packet.mmentry[0]
             if self.verbose:
-                print(f"{packet.source.pretty}: num_sta={num_sta}")
+                print(f"{packet.source.pretty}: stations={num_sta}")
             for sta in range(num_sta):
                 sta_data = packet.mmentry[1 + sta * stat_info_size:1 + (sta + 1) * stat_info_size]
                 netstat = HPAVNetworkStats.from_bytes(sta_data)
+                networks.append(netstat)
                 if self.verbose:
                     print(f"  STA {sta}: {device.mac.pretty} <-> {netstat.macaddr.pretty} Average PHY Rate: {netstat.txrate} up / {netstat.rxrate} down Mbps")
 
-        # TODO: what to return? Shall we push the discovered data into the individual device object or return
-        # TODO: ... related metadata in some other form? Right now it's simply displayed
+        return networks
 
-    def _hpav_network_info(self, device: PowerlineDevice):
+    def _hpav_network_info(self, device: PowerlineDevice) -> List[HPAVNetworkInformation]:
         """ Not supported by Broadcom, returns MME_UNSUPPORTED error indication """
-        """ Implementation TBD """
+        """ Implementation - I have no device that responds to this """
+
         packet = ManagementMessage(device.mac, self.interface_mac)
         packet.mmv = 1
         packet.mmtype = MMType.CM_NW_INFO.value
@@ -160,7 +168,8 @@ class PowerlineInterface():
         # TODO: Process response into device fields
 
     def _hpav_get_hfid(self, device: PowerlineDevice):
-        """ Not supported by Broadcom """
+        """ Not supported by Broadcom - implementation tbd, I have no device that responds to this """
+
         packet = ManagementMessage(device.mac, self.interface_mac)
         packet.mmtype = MMType.CM_HFID.value
         packet.mmentry = struct.pack("!B", HPAVHFIDRequest.GET_USER_HFID.value)
@@ -170,7 +179,10 @@ class PowerlineInterface():
         # TODO: Process response into device fields
 
     def _broadcom_discover(self, device: PowerlineDevice):
-        """ Send to broadcast and process responses or use already-discovered MAC to send to? """
+        """ This management message can be sent to both broadcast address and to specific device
+            In the current implementation we discover devices with the generic HPAV MM and only call the
+            vendor specific MMs once the vendor has been identified. This might be wrong.
+            Currently, this simply injects the HFID into the device object """
 
         gigle_magic = b"\x01\xa3\x97\xa2\x55\x53\xbe\xf1\xfc\xf9\x79\x6b\x52\x14\x13\xe9\xe2"
 
@@ -189,7 +201,9 @@ class PowerlineInterface():
             device.hfid = hfid
 
     def _broadcom_get_hfid(self, device: PowerlineDevice, arg: BroadcomHFIDRequest):
-        """ Query either a Manufacturer or User HFID (Human-Friendly Identifier) """
+        """ Query either a Manufacturer or User HFID (Human-Friendly Identifier) and injects it into
+            the device object """
+
         packet = ManagementMessage(device.mac, self.interface_mac, EtherType.GIGLE.value)
         packet.mmv = 2
         packet.mmtype = MMType.BROADCOM_GET_HFID.value
@@ -202,8 +216,11 @@ class PowerlineInterface():
         hfid = received[0].payload[12:].decode("utf8")
         device.hfid = hfid
 
-    def _broadcom_network_info(self, device: PowerlineDevice, arg: BroadcomNetworkInfoRequest):
-        """ Experimental to check the returned data - Clean me up pls and make me useful """
+    def _broadcom_network_info(self, device: PowerlineDevice, arg: BroadcomNetworkInfoRequest) -> List[BroadcomNetworkInformation]:
+        """ Docstring TBD """
+
+        broadcom_network_info_size = 19
+
         packet = ManagementMessage(device.mac, self.interface_mac, EtherType.GIGLE.value)
         packet.mmv = 2
         packet.mmtype = MMType.BROADCOM_NETWORK_INFO.value
@@ -216,38 +233,38 @@ class PowerlineInterface():
         print(f"Got network data from {received[0].source.pretty}: {data.hex()}")
         number_of_networks = data[0]
         print(f"Number of networks: {number_of_networks}")
+
+        networks = list()
+
         pointer = 1
         for num in range(1, number_of_networks + 1):
             print(f"Info for network {num}")
-            chunk = data[pointer:pointer + 19]
+            chunk = data[pointer:pointer + broadcom_network_info_size]
             nid, snid, tei, role, ccomac, kind, numnets, status = unpack('!7sBBB6sBBB', chunk)
-            pointer = pointer + 19
+            pointer = pointer + broadcom_network_info_size
 
-            netstatus = BroadcomNetworkInformation(nid.hex(), snid, tei, role, MacAddress(ccomac.hex()), kind, numnets,
-                                                   status)
+            netstatus = BroadcomNetworkInformation.from_bytes(chunk)
+            networks.append(netstatus)
             print(netstatus)
 
             print(f"  Network ID:  {nid.hex()}")
             print(f"  Short Network ID:  {snid}")
             print(f"  Terminal Equipment ID:  {tei}")
-            print(f"  Role:  {StationRole(role).name}")
+            print(f"  Role:  {BroadcomStationRole(role).name}")
             print(f"  Central Coordinator MAC:  {MacAddress(ccomac.hex()).pretty}")
             print(f"  Kind:  {NetworkKind(kind).name}")
             print(f"  Number of coordinating networks:  {numnets}")
             print(f"  Status:  {PowerlineStatus(status).name}")
 
-        return received
+        return networks
 
     def discover_devices(self) -> List[PowerlineDevice]:
+        """ Remove network-specific queries and concentrate on detecting devices and collecting basic info? """
+
         devices = self._hpav_discover()
 
         for dev in devices:
             self._hpav_station_caps(dev)
-
-            # should the stats calls inject their data into the device passed to them as argument, or
-            # is it the responsibility of the caller? Not all functions would include discovery e.g. when
-            # directly getting/setting values on a specific device.
-
             self._hpav_network_stats(dev)
 
             if dev.oui == OUI.BROADCOM:
@@ -263,3 +280,39 @@ class PowerlineInterface():
                 self._hpav_get_hfid(dev)
 
         return devices
+
+    def discover_networks(self):
+        """ Discover networks and then collect CCO and network PHY rate data """
+
+        netdata = None
+        network_list = list()
+        devices = self._hpav_discover()
+
+        for dev in devices:
+            # Discover oui, so we can call the correct network info implementation
+            self._hpav_station_caps(dev)
+
+            if dev.oui == OUI.BROADCOM:
+                netdata = self._broadcom_network_info(dev, BroadcomNetworkInfoRequest.GET_NETWORK_ANY)
+                for net in netdata:
+                    if net.role == BroadcomStationRole.CCO.value:
+                        print(f"{dev.mac.pretty}: I am CCO for network {net.nid.hex()}")
+                    else:
+                        print(f"{dev.mac.pretty}: My CCO for network {net.nid.hex()} is {net.ccomac.pretty}")
+            else:
+                netdata = self._hpav_network_info(dev)
+
+            for net in netdata:
+                _tmp = PowerlineNetwork(net.nid.hex())
+                if _tmp not in network_list:
+                    print(f"Adding newly found network {net.nid.hex()} to list")
+                    network_list.append(_tmp)
+                else:
+                    # extend network information with new data
+                    pass
+
+            print(f"network_list: {network_list}")
+
+            # Since the network info routes gave us the network IDs, discover network stats that now we can
+            # correlate with the networks (down/up PHY rates between specific MACs)
+            self._hpav_network_stats(dev)

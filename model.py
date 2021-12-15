@@ -2,6 +2,7 @@ import struct
 from dataclasses import dataclass
 from enum import Enum
 from struct import unpack
+from typing import List
 
 
 class HPAVVersion(Enum):
@@ -124,6 +125,13 @@ class HPAVHFIDRequest(Enum):
     SET_NETWORK_HFID = 0x04
 
 
+class HPAVStationRole(Enum):
+    STA = 0
+    PROXY_COORDINATOR = 1
+    CCO = 2
+
+
+# Below are Broadcom specific, TBD to organize them
 class BroadcomHFIDRequest(Enum):
     GET_MANUFACTURER_HFID = 0x1b
     GET_USER_HFID = 0x25
@@ -134,8 +142,7 @@ class BroadcomNetworkInfoRequest(Enum):
     GET_NETWORK_ANY = 0x01
 
 
-# Below are Broadcom specific, TBD to organize them
-class StationRole(Enum):
+class BroadcomStationRole(Enum):
     UNASSOC_STA = 0
     UNASSOC_CCO = 1
     STA = 2
@@ -174,13 +181,13 @@ class MacAddress:
         return self.address == other.address
 
     def __repr__(self):
-        return f"<MacAddress({self.address})>"
+        return f"<MacAddress({self.pretty})>"
 
     def as_bytes(self) -> bytes:
         return bytes.fromhex(self.address.replace(":", ""))
 
     @property
-    def pretty(self):
+    def pretty(self) -> str:
         return ':'.join([self.address[i:i + 2] for i in range(0, len(self.address), 2)])
 
     @classmethod
@@ -289,7 +296,7 @@ class ManagementMessage(EthernetPacket):
     def payload(self, payload):
         self._payload = payload
 
-    def process_payload(self):
+    def process_payload(self) -> None:
         """ Unpack payload/binary packet data into Management Message fields """
         """ Note to self: should this also be a BinaryData object? """
         self.mmv, self.mmtype, self.fmi, self.fmsn = unpack("=BHBB", self._payload[0:5])
@@ -320,7 +327,7 @@ class BinaryData:
 
 
 @dataclass
-class HPAVStationInfo(BinaryData):
+class HPAVDiscoverStationInfo(BinaryData):
     """ Represents a STA in a CM_DISCOVER_LIST.CNF message"""
 
     macaddr: bytes
@@ -338,8 +345,8 @@ class HPAVStationInfo(BinaryData):
 
 
 @dataclass
-class HPAVNetworkInfo(BinaryData):
-    """ Represent a network in a CM_DISCOVER_LIST.CNF message """
+class HPAVDiscoverNetworkInfo(BinaryData):
+    """ Represents a network in a CM_DISCOVER_LIST.CNF message """
 
     macaddr: bytes
     nid: str
@@ -356,17 +363,37 @@ class HPAVNetworkInfo(BinaryData):
 
 
 @dataclass
-class BroadcomNetworkInformation(BinaryData):
-    """ Broadcom specific, docstring TBD """
-
+class HPAVNetworkInformation(BinaryData):
     nid: str
     snid: int
     tei: int
-    role: StationRole
+    role: HPAVStationRole
     ccomac: MacAddress
-    kind: NetworkKind
+    access: NetworkKind
     numnets: int
+    # NOTE: In contrast to Broadcom netinfo block, this one does not have a status field
+
+    UNPACK_FORMAT = "!7sBBB6sBB"
+
+    def __post_init__(self):
+        self.ccomac = MacAddress(self.ccomac.hex())
+
+
+@dataclass
+class BroadcomNetworkInformation(HPAVNetworkInformation):
+    """ Represents a network information block in a BROADCOM_NETWORK_INFO response """
+    """ SHould this be subclass of the generic network information response? """
+
+    # nid: str
+    # snid: int
+    # tei: int
+    # role: BroadcomStationRole
+    # ccomac: MacAddress
+    # kind: NetworkKind
+    # numnets: int
     status: PowerlineStatus
+
+    UNPACK_FORMAT = "!7sBBB6sBBB"
 
 
 @dataclass
@@ -426,16 +453,46 @@ class PowerlineDevice():
         self.net_list = []
 
     def __repr__(self):
-        return f"<PowerlineDevice(iface={self.interface.interface_name}, av_version={HPAVVersion(self.hpav_version).name if self.hpav_version else 'N/A'}, address={self.mac.address}, oui={self.oui.name})>"
+        return f"<PowerlineDevice(iface={self.interface.interface_name}, " \
+               f"av_version={HPAVVersion(self.hpav_version).name if self.hpav_version else 'N/A'}, " \
+               f"address={self.mac.pretty}, oui={self.oui.name if self.oui else 'N/A'})>"
 
-    def add_station(self, sta: HPAVStationInfo):
+    def add_station(self, sta: HPAVDiscoverStationInfo) -> None:
         self.sta_list.append(sta)
 
-    def add_net(self, net: HPAVNetworkInfo):
+    def add_net(self, net: HPAVDiscoverNetworkInfo) -> None:
         self.net_list.append(net)
 
-    def stations(self):
+    def stations(self) -> List[HPAVDiscoverStationInfo]:
         return self.sta_list
 
-    def networks(self):
+    def networks(self) -> List[HPAVDiscoverNetworkInfo]:
         return self.net_list
+
+
+class PowerlineNetwork:
+    def __init__(self, network_id: str):
+        self.nid = network_id
+        self.stations = dict()
+        self.cco = None
+
+    def __eq__(self, other):
+        if other is None:
+            return False
+        if not isinstance(other, PowerlineNetwork):
+            return False
+
+        return self.nid == other.nid
+
+    def __hash__(self):
+        return hash(self.nid)
+
+    def __repr__(self):
+        return f"<PowerlineNetwork({self.nid})>"
+
+    def add_station(self, station: PowerlineDevice):
+        self.stations[station.mac.address] = station
+
+    def get_station(self, station: PowerlineDevice):
+        return self.stations.get(station.mac.address, None)
+

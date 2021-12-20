@@ -409,6 +409,17 @@ class HPAVDiscoverNetworkInfo(BinaryData):
         """ Extract Access field from SNID/Access byte """
         return NetworkKind(self.snid_access & 0b11110000)
 
+    def __eq__(self, other):
+        if other is None:
+            return False
+        if not hasattr(other, "nid"):
+            return False
+
+        return self.nid == other.nid
+
+    def __hash__(self):
+        return hash(self.nid)
+
 
 @dataclass
 class HPAVNetworkInformation(BinaryData):
@@ -434,6 +445,17 @@ class HPAVNetworkInformation(BinaryData):
 
     def __post_init__(self):
         self.ccomac = MacAddress(self.ccomac.hex())
+
+    def __eq__(self, other):
+        if other is None:
+            return False
+        if not hasattr(other, "nid"):
+            return False
+
+        return self.nid == other.nid
+
+    def __hash__(self):
+        return hash(self.nid)
 
 
 @dataclass

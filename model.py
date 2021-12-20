@@ -131,6 +131,19 @@ class HPAVStationRole(Enum):
     CCO = 2
 
 
+class NetworkKind(Enum):
+    IN_HOME_NETWORK = 0
+    ACCESS_NETWORK = 1
+
+
+class HPAVCCOCoordinatingStatus(Enum):
+    UNKNOWN = 0
+    NON_COORDINATING_NETWORK = 1
+    COORDINATING_GROUP_STATUS_UNKNOWN = 2
+    COORDINATING_NETWORK_IN_SAME_GROUP_WITH_CCO = 3
+    COORDINATING_NETWORK_NOT_IN_SAME_GROUP_WITH_CCO = 4
+
+
 # Below are Broadcom specific, TBD to organize them
 class BroadcomHFIDRequest(Enum):
     GET_MANUFACTURER_HFID = 0x1b
@@ -150,15 +163,10 @@ class BroadcomStationRole(Enum):
     BACKUP_CCO = 4
 
 
-class NetworkKind(Enum):
-    IN_HOME_NETWORK = 0
-    ACCESS_NETWORK = 1
-
-
-class PowerlineStatus(Enum):
+class BroadcomPowerlineStatus(Enum):
     JOINED = 0
     NOT_JOINED_HAVE_NMK = 1
-    NOT_JOINED_NO_NMK = 1
+    NOT_JOINED_NO_NMK = 2
 
 
 class MacAddress:
@@ -167,14 +175,14 @@ class MacAddress:
         if address.find(':') != -1:
             address_bytes = address.split(':')
             if len(address_bytes) != 6:
-                raise ValueError("MAC address format error")
+                raise ValueError(f"MAC address format error: {address}")
             for element in address_bytes:
                 if len(element) > 2:
-                    raise ValueError("MAC address format error")
+                    raise ValueError(f"MAC address format error: {address}")
             self.address = address.replace(":", "").lower()
         else:
             if len(address) != 12:
-                raise ValueError("MAC address format error")
+                raise ValueError(f"MAC address format error: {address}")
             self.address = address.lower()
 
     def __eq__(self, other):
@@ -232,10 +240,15 @@ class ManagementMessage(EthernetPacket):
     def __init__(self, dest: MacAddress, source: MacAddress, ethertype: bytes = None, payload: bytes = None):
         super().__init__(dest, source, ManagementMessage.DEFAULT_MTYPE if not ethertype else ethertype, payload)
 
+        # Management Message Version
         self.mmv = 1
+        # Management Message Type
         self.mmtype = None
+        # Fragmentation Management Information
         self.fmi = 0
+        # Fragmentation Message Sequence Number
         self.fmsn = 0
+        # Management Message Entry Data
         self.mmentry = bytes()
 
         if payload:
@@ -282,7 +295,7 @@ class ManagementMessage(EthernetPacket):
 
     @property
     def mmbase(self):
-        """ Masks the two LSBs of the MMType to give so we can identify the base type regardless of it's a
+        """ Masks the two LSBs of the MMType to give, so we can identify the base type regardless of it's a
         equest or response """
         return self.mmtype & 0b1111111111111100
 
@@ -290,6 +303,8 @@ class ManagementMessage(EthernetPacket):
     def payload(self) -> bytes:
         header = struct.pack("<BHBB", self.mmv, self.mmtype, self.fmi, self.fmsn)
         self.payload = header + self.mmentry
+
+        # Add padding to minimal payload length
         return self._payload + bytes([0 for i in range(60 - len(self._payload))])
 
     @payload.setter
@@ -328,14 +343,21 @@ class BinaryData:
 
 @dataclass
 class HPAVDiscoverStationInfo(BinaryData):
-    """ Represents a STA in a CM_DISCOVER_LIST.CNF message"""
+    """ Represents an STA in a CC_DISCOVER_LIST.CNF message"""
 
+    # MAC address of the discovered STA
     macaddr: bytes
+    # Terminal Equipment Identifier of the discovered STA
     tei: int
+    # Whether the STA is associated with the same network (0=different network, 1=same network)
     samenetwork: bool
-    snid: int
+    # 4 LSB = Short Network identifier of the STA, 4 MSB = 0x0 for in-home, 0x01 for Access Network
+    snid_access: int
+    # Capabilities
     caps: int
+    # Signal level, 0x00 = N/A, 0x01 to 0x0f = level indicator, the smaller the better >= 0x10 = reserved
     signal: int
+    # Average BLE
     avgble: int
 
     UNPACK_FORMAT = "!6sBBBBBB"
@@ -343,33 +365,68 @@ class HPAVDiscoverStationInfo(BinaryData):
     def __post_init__(self):
         self.macaddr = MacAddress(self.macaddr.hex())
 
+    @property
+    def snid(self):
+        """ Extract SNID field from SNID/Access byte """
+        return self.snid_access & 0b00001111
+
+    @property
+    def access(self):
+        """ Extract Access field from SNID/Access byte """
+        return NetworkKind(self.snid_access & 0b11110000)
+
 
 @dataclass
 class HPAVDiscoverNetworkInfo(BinaryData):
-    """ Represents a network in a CM_DISCOVER_LIST.CNF message """
+    """ Represents a network in a CC_DISCOVER_LIST.CNF message """
 
-    macaddr: bytes
+    # Network Identifier
     nid: str
+    # 4x LSB = Snort Network Identifier. 4x MSB = 0x00 for in-home, 0x01 for access
     snid_access: int
+    # Hybrid Mode
     hm: int
+    # Number of Beacon Slots
     numslots: int
-    coord_status: int
+    # Coordinating Status of the CCO, see HPAVCCOCoordinatingStatus (int)
+    coord_status: HPAVCCOCoordinatingStatus
+    # Offset between Beacon Region of the discovered network and that of the STA's own network
+    # Units are Allocation Units
     offset: int
 
     UNPACK_FORMAT = "!7sBBBBH"
 
     def __post_init__(self):
-        self.macaddr = MacAddress(self.macaddr.hex())
+        pass
+
+    @property
+    def snid(self) -> int:
+        """ Extract SNID field from SNID/Access byte """
+        return self.snid_access & 0b00001111
+
+    @property
+    def access(self) -> NetworkKind:
+        """ Extract Access field from SNID/Access byte """
+        return NetworkKind(self.snid_access & 0b11110000)
 
 
 @dataclass
 class HPAVNetworkInformation(BinaryData):
+    """ Represents network data in a  CM_NW_INFO.CNF message """
+
+    # Network Identifier
     nid: str
+    # Short Network Identifier (4 LSB only, rest is zero)
     snid: int
+    # Terminal Equipment Identifier of the STA in the AVLN
     tei: int
+    # Role of the Station in the AVLN
     role: HPAVStationRole
+    # MAC of the CCo
     ccomac: MacAddress
+    # Access or In-Home Network
     access: NetworkKind
+    # Number of Neighbor Networks that are coordinating with the AVLN
     numnets: int
     # NOTE: In contrast to Broadcom netinfo block, this one does not have a status field
 
@@ -381,17 +438,16 @@ class HPAVNetworkInformation(BinaryData):
 
 @dataclass
 class BroadcomNetworkInformation(HPAVNetworkInformation):
-    """ Represents a network information block in a BROADCOM_NETWORK_INFO response """
-    """ SHould this be subclass of the generic network information response? """
+    """ Represents a network information block in a BROADCOM_NETWORK_INFO.CNF message """
 
     # nid: str
     # snid: int
     # tei: int
     # role: BroadcomStationRole
     # ccomac: MacAddress
-    # kind: NetworkKind
+    # kind: NetworkKind (~ access)
     # numnets: int
-    status: PowerlineStatus
+    status: BroadcomPowerlineStatus
 
     UNPACK_FORMAT = "!7sBBB6sBBB"
 
@@ -438,7 +494,7 @@ class HPAVNetworkStats(BinaryData):
         self.macaddr = MacAddress(self.macaddr.hex())
 
 
-class PowerlineDevice():
+class PowerlineDevice:
     """ Represents all the information we know about a detected powerline device """
 
     def __init__(self, address: MacAddress, oui: OUI = None):
@@ -460,7 +516,7 @@ class PowerlineDevice():
     def add_station(self, sta: HPAVDiscoverStationInfo) -> None:
         self.sta_list.append(sta)
 
-    def add_net(self, net: HPAVDiscoverNetworkInfo) -> None:
+    def add_network(self, net: HPAVDiscoverNetworkInfo or BroadcomNetworkInformation) -> None:
         self.net_list.append(net)
 
     def stations(self) -> List[HPAVDiscoverStationInfo]:
@@ -495,4 +551,3 @@ class PowerlineNetwork:
 
     def get_station(self, station: PowerlineDevice):
         return self.stations.get(station.mac.address, None)
-

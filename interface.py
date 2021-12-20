@@ -75,7 +75,8 @@ class PowerlineInterface():
         self.socket.settimeout(oldtimeout)
         return received
 
-    def _hpav_discover(self, target: MacAddress = MacAddress("FF:FF:FF:FF:FF:FF")) -> List[PowerlineDevice]:
+    def _hpav_discover(self, target: MacAddress = MacAddress("FF:FF:FF:FF:FF:FF")) -> (
+                                                                List[PowerlineDevice], List[HPAVDiscoverNetworkInfo]):
         """ Send CC_DISCOVER_LIST.REQ and wait for CC_DISCOVER_LIST.CNF responses.
             If target not specified, send a broadcast request which will receive one response packet from
             each HPAV device on the network.
@@ -94,7 +95,9 @@ class PowerlineInterface():
 
         received = self._request(packet)
 
-        found_list = []
+        found_devices = []
+        found_networks = []
+
         for packet in received:
             dev = PowerlineDevice(packet.source)
             dev.interface = self
@@ -111,16 +114,18 @@ class PowerlineInterface():
             for net in range(num_nets):
                 net_data = packet.mmentry[pointer + net * network_info_size:pointer + (net + 1) * network_info_size]
                 netinfo = HPAVDiscoverNetworkInfo.from_bytes(net_data)
-                # Should we skip or add and require to check status later?
+
                 if netinfo.coord_status <= HPAVCCOCoordinatingStatus.NON_COORDINATING_NETWORK.value:
-                    print(f"  Device {dev.mac.pretty} -> network {netinfo.nid.hex()} is not a coordinating network")
+                    print(f"  Device {dev.mac.pretty} -> network {netinfo.nid.hex()} is a non-coordinating network")
+
                 dev.add_network(netinfo)
+                found_networks.append(netinfo)
 
             print(f"    Device {dev.mac.pretty}: STAs[{num_sta}]={dev.stations()}, nets[{num_nets}]={dev.networks()}")
             dev.interface = self
-            found_list.append(dev)
+            found_devices.append(dev)
 
-        return found_list
+        return found_devices, found_networks
 
     def _hpav_station_caps(self, device: PowerlineDevice):
         """ CM_STA_CAP can be used to identify device vendor/OUI for further, vendor specific requests
@@ -265,7 +270,7 @@ class PowerlineInterface():
         number_of_networks = data[0]
         print(f"    {received[0].source.pretty} reported {number_of_networks} networks")
 
-        networks = list()
+        networks = []
 
         pointer = 1
         for num in range(1, number_of_networks + 1):
@@ -280,22 +285,25 @@ class PowerlineInterface():
             print(f"    Network ID:  {netstatus.nid.hex()} role {BroadcomStationRole(netstatus.role).name}, "
                   f"{NetworkKind(netstatus.access).name}, coordinator is {netstatus.ccomac.pretty}, {BroadcomPowerlineStatus(netstatus.status).name}")
 
+            if netstatus not in device.networks():
+                device.add_network(netstatus)
+
         return networks
 
     def discover_devices(self) -> List[PowerlineDevice]:
         """ Remove network-specific queries and concentrate on detecting devices and collecting basic info? """
         """ Or only call network info queries to collect the number of networks known by each STA? """
 
-        devices = self._hpav_discover()
-        print(f"Discovered {len(devices)} devices")
+        devices, networks = self._hpav_discover()
+        print(f"Discovered {len(devices)} devices and {len(networks)} networks")
 
         for dev in devices:
             self._hpav_station_caps(dev)
-            #self._hpav_network_stats(dev)
 
             if dev.oui == OUI.BROADCOM:
                 if self.verbose:
                     print("Broadcom device detected, using vendor specific requests")
+
                 self._broadcom_discover(dev)
                 self._broadcom_get_hfid(dev, BroadcomHFIDRequest.GET_USER_HFID)
                 # only for network count?
@@ -303,17 +311,18 @@ class PowerlineInterface():
             else:
                 if self.verbose:
                     print("Generic device, using HPAV standard queries")
+
+                self._hpav_get_hfid(dev)
                 # only for network count?
                 self._hpav_network_info(dev)
-                self._hpav_get_hfid(dev)
 
         return devices
 
     def discover_networks(self):
         """ Discover networks and then collect CCO and network PHY rate data """
 
-        network_list = list()
-        devices = self._hpav_discover()
+        network_list = []
+        devices, networks = self._hpav_discover()
 
         for dev in devices:
             # Discover oui, so we can call the correct network info implementation
@@ -325,10 +334,10 @@ class PowerlineInterface():
                 for net in netdata:
                     if net.role == BroadcomStationRole.CCO.value:
                         print(f"{dev.mac.pretty}: I am CCO for network {net.nid.hex()}")
-                    elif net.access == NetworkKind.IN_HOME_NETWORK:
+                    elif net.access == NetworkKind.IN_HOME_NETWORK.value:
                         print(f"{dev.mac.pretty}: CCO for network {net.nid.hex()} is {net.ccomac.pretty}")
                     else:
-                        print(f"{dev.mac.pretty} No access to network {net.nid.hex()}")
+                        print(f"{dev.mac.pretty}: No access to network {net.nid.hex()}")
             else:
                 netdata = self._hpav_network_info(dev)
 

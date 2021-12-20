@@ -51,6 +51,8 @@ def main(in_args: argparse.Namespace):
             print(
                 f"[{device.interface.interface_name}] {device.mac.pretty} ({HPAVVersion(device.hpav_version).name} "
                 f"{OUI(device.oui).name}) STAs:{len(device.sta_list)} NETs:{len(device.net_list)} HFID:'{device.hfid}'")
+            for net in device.networks():
+                print(f"  {net.nid.hex()}")
 
     elif args.command == "networks":
         for iface in interfaces:

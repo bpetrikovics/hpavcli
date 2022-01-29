@@ -3,9 +3,10 @@
 import os
 import sys
 import argparse
+from typing import Any
 
 
-def get_default_interface():
+def get_default_interface() -> Any:
     gw = netifaces.gateways().get('default')
     gw_if = gw[netifaces.AF_INET][1]
     return gw_if
@@ -26,15 +27,15 @@ def parse_args() -> argparse.Namespace:
 
 
 def main(in_args: argparse.Namespace):
-    if args.interface:
-        interface_list = args.interface.split(',')
+    if in_args.interface:
+        interface_list = in_args.interface.split(',')
     else:
         interface_list = [get_default_interface()]
 
     interfaces = list()
     for iface in interface_list:
         try:
-            interfaces.append(PowerlineInterface(iface, verbose=args.verbose))
+            interfaces.append(PowerlineInterface(iface, verbose=in_args.verbose))
         except (ValueError, PermissionError) as exc:
             print(f"Error creating PowerlineInterface for {iface}: {exc}")
 
@@ -42,8 +43,8 @@ def main(in_args: argparse.Namespace):
         print("No ethernet interfaces could be initialized, exiting.")
         sys.exit(-1)
 
-    if args.command == "scan":
-        devices = list()
+    if in_args.command == "scan":
+        devices = []
         for iface in interfaces:
             devices.extend(iface.discover_devices())
 
@@ -52,7 +53,7 @@ def main(in_args: argparse.Namespace):
                 f"[{device.interface.interface_name}] {device.mac.pretty} ({HPAVVersion(device.hpav_version).name} "
                 f"{OUI(device.oui).name}) STAs:{len(device.sta_list)} NETs:{len(device.net_list)} HFID:'{device.hfid}'")
             for net in device.networks():
-                print(f"  {net.nid.hex()}")
+                print(f"  {net}")
 
     elif args.command == "networks":
         for iface in interfaces:

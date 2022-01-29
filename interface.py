@@ -33,7 +33,7 @@ class PowerlineInterface():
 
         received = list()
         start = time.time()
-        oldtimeout = self.socket.gettimeout()
+        previous_timeout = self.socket.gettimeout()
 
         while True:
             elapsed = time.time() - start
@@ -72,19 +72,18 @@ class PowerlineInterface():
                     print(f"{self.interface_name}\t<< [{recv_packet.source.pretty} -> {recv_packet.dest.pretty}] {recv_packet}")
                 received.append(recv_packet)
 
-        self.socket.settimeout(oldtimeout)
+        self.socket.settimeout(previous_timeout)
         return received
 
     def _hpav_discover(self, target: MacAddress = MacAddress("FF:FF:FF:FF:FF:FF")) -> (
                                                                 List[PowerlineDevice], List[HPAVDiscoverNetworkInfo]):
         """ Send CC_DISCOVER_LIST.REQ and wait for CC_DISCOVER_LIST.CNF responses.
-            If target not specified, send a broadcast request which will receive one response packet from
+            If target was not specified, send a broadcast request which will receive one response packet from
             each HPAV device on the network.
             Please note that for example with Broadcom based devices (at least my TL-PA7017) the network list in
             this response only contains those networks that the adapter is not part of, so it should be probably
             not used at all.
         """
-
         print("*** HPAV Discover")
 
         sta_info_size = 12
@@ -118,6 +117,7 @@ class PowerlineInterface():
                 if netinfo.coord_status <= HPAVCCOCoordinatingStatus.NON_COORDINATING_NETWORK.value:
                     print(f"  Device {dev.mac.pretty} -> network {netinfo.nid.hex()} is a non-coordinating network")
 
+                # Do we want to associate the networks to STAs like this or rather collect/process separately?
                 dev.add_network(netinfo)
                 found_networks.append(netinfo)
 
@@ -268,7 +268,7 @@ class PowerlineInterface():
         payload = received[0].payload
         data = payload[9:]
         number_of_networks = data[0]
-        print(f"    {received[0].source.pretty} reported {number_of_networks} networks")
+        print(f"    STA {received[0].source.pretty} reported {number_of_networks} networks")
 
         networks = []
 
@@ -279,10 +279,12 @@ class PowerlineInterface():
 
             pointer = pointer + broadcom_network_info_size
 
-            networks.append(netstatus)
-            print(netstatus)
+            if self.verbose:
+                print("    ", netstatus)
 
-            print(f"    Network ID:  {netstatus.nid.hex()} role {BroadcomStationRole(netstatus.role).name}, "
+            networks.append(netstatus)
+
+            print(f"      Network ID:  {netstatus.nid.hex()} role {BroadcomStationRole(netstatus.role).name}, "
                   f"{NetworkKind(netstatus.access).name}, coordinator is {netstatus.ccomac.pretty}, {BroadcomPowerlineStatus(netstatus.status).name}")
 
             if netstatus not in device.networks():

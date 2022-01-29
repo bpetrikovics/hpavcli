@@ -324,7 +324,7 @@ class ManagementMessage(EthernetPacket):
                self.payload
 
     def __repr__(self):
-        return f"<ManagementMessage(MMV={self.mmv}, MMTYPE=0x{self.mmtype:04x}, ({MMType(self.mmbase).name}.{MMSubtype(self.subtype).name}), FMI={self.fmi}, FMSN={self.fmsn}, MMENTRY={self.mmentry.hex() if self.mmentry else None})>"
+        return f"<ManagementMessage(mmv={self.mmv}, mmtype=0x{self.mmtype:04x} ({MMType(self.mmbase).name}.{MMSubtype(self.subtype).name}), fmi={self.fmi}, fmsn={self.fmsn}, mmentry={self.mmentry.hex() if self.mmentry else None})>"
 
 
 @dataclass

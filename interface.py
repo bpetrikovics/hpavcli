@@ -9,7 +9,7 @@ ETH_P_ALL = 3
 DEVICE_TIMEOUT = 0.1
 
 
-class PowerlineInterface():
+class PowerlineInterface:
     def __init__(self, interface_name: str, verbose: bool = False, timeout: float = DEVICE_TIMEOUT):
         """ Raises ValueError if interface was not found """
 

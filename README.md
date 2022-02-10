@@ -3,7 +3,9 @@
 
 [![CodeQL](https://github.com/bpetrikovics/shelly-ota/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/bpetrikovics/hpavcli/actions/workflows/codeql-analysis.yml)
 
-hpavcli is a command line utility to communicate with Powerline (HPAV) devices from various brands, written in Python.
+**WARNING - WORK IN PROGRESS**
+
+**hpavcli** is (will be) a command line utility to communicate with Powerline (HPAV) devices from various brands, written in Python.
 
 It all began when I bought a pair of Powerline adapters, and wanted to be able to monitor them, keep an eye on the
 network speeds etc. Then I realized that the vendor only provided a pretty useless Windows GUI utility and that the
@@ -27,3 +29,7 @@ HPAV2.1 protocol documentation:
 Sources I used:
 * https://github.com/serock/pla-util/wiki
 * https://docs.rs/crate/powerline/0.1.0/source/
+
+NOTE: The code is only confirmed to run on Linux. Definitely won't work with Mac and BSD due to the lack of AF_PACKET
+("raw Ethernet") implementation. Might work on Windows, but never tried. Until then, it checks for Linux and refuses
+to run otherwise.

@@ -2,6 +2,7 @@
 
 import os
 import sys
+import platform
 import argparse
 from typing import Any
 
@@ -27,6 +28,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main(in_args: argparse.Namespace):
+    if platform.system() != "Linux":
+        print("Sorry, this code needs to be run on Linux.")
+        sys.exit(-1)
+
     if in_args.interface:
         interface_list = in_args.interface.split(',')
     else:

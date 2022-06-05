@@ -4,10 +4,9 @@ import os
 import sys
 import platform
 import argparse
-from typing import Any
 
 
-def get_default_interface() -> Any:
+def get_default_interface() -> str:
     gw = netifaces.gateways().get('default')
     gw_if = gw[netifaces.AF_INET][1]
     return gw_if

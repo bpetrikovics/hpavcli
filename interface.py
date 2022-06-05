@@ -10,12 +10,12 @@ DEVICE_TIMEOUT = 0.1
 
 
 class PowerlineInterface:
-    def __init__(self, interface_name: str, verbose: bool = False, timeout: float = DEVICE_TIMEOUT):
-        """ Raises ValueError if interface was not found """
+    def __init__(self, interface_name: str, sock = None, verbose: bool = False, timeout: float = DEVICE_TIMEOUT):
+        """ Represents an interface on which powerline devices are present """
 
         self.interface_name = interface_name
         self.interface_mac = MacAddress(netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr'])
-        self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_ALL))
+        self.socket = sock if sock else socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_ALL))
         self.socket.bind((self.interface_name, 0))
         self.verbose = verbose
         self.timeout = timeout

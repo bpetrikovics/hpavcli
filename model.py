@@ -517,7 +517,10 @@ class HPAVNetworkStats(BinaryData):
 
 
 class PowerlineDevice:
-    """ Represents all the information we know about a detected powerline device """
+    """ Represents all the information we know about a detected powerline device.
+        Created by _hpav_discover using CC_DISCOVER_LIST queries, further vendor specific details then
+        filled by _broadcom_discover
+    """
 
     def __init__(self, address: MacAddress, oui: OUI = None):
         self.interface = None  # FIXME

@@ -2,14 +2,13 @@
 
 import os
 import sys
-import platform
 import argparse
+
+from scapy.all import *
 
 
 def get_default_interface() -> str:
-    gw = netifaces.gateways().get('default')
-    gw_if = gw[netifaces.AF_INET][1]
-    return gw_if
+    return conf.iface.name
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,10 +26,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def main(in_args: argparse.Namespace):
-    if platform.system() != "Linux":
-        print("Sorry, this code needs to be run on Linux.")
-        sys.exit(-1)
-
     if in_args.interface:
         interface_list = in_args.interface.split(',')
     else:
@@ -39,7 +34,7 @@ def main(in_args: argparse.Namespace):
     interfaces = list()
     for iface in interface_list:
         try:
-            interfaces.append(PowerlineInterface(iface, verbose=in_args.verbose))
+            interfaces.append(PowerlineInterface(ifaces.dev_from_name(iface), verbose=in_args.verbose))
         except (ValueError, PermissionError) as exc:
             print(f"Error creating PowerlineInterface for {iface}: {exc}")
 

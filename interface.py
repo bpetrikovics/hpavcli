@@ -1,22 +1,23 @@
-import socket
-import time
+from enum import Enum
 
-import netifaces
+from scapy.all import *
 
 from model import *
 
-ETH_P_ALL = 3
-DEVICE_TIMEOUT = 0.1
+# ETH_P_ALL = 3
+DEVICE_TIMEOUT = 0.5
 
 
 class PowerlineInterface:
-    def __init__(self, interface_name: str, sock = None, verbose: bool = False, timeout: float = DEVICE_TIMEOUT):
+    # TODO: interface type
+    def __init__(self, interface, sock = None, verbose: bool = False, timeout: float = DEVICE_TIMEOUT):
         """ Represents an interface on which powerline devices are present """
+        
+        self.interface = interface
+        self.interface_name = interface.name
+        self.interface_mac = MacAddress(interface.mac)
 
-        self.interface_name = interface_name
-        self.interface_mac = MacAddress(netifaces.ifaddresses(self.interface_name)[netifaces.AF_LINK][0]['addr'])
-        self.socket = sock if sock else socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_ALL))
-        self.socket.bind((self.interface_name, 0))
+        self.socket = conf.L2socket(iface=self.interface)
         self.verbose = verbose
         self.timeout = timeout
 
@@ -29,51 +30,48 @@ class PowerlineInterface:
     def _request(self, packet: ManagementMessage) -> List[ManagementMessage]:
         if self.verbose:
             print(f"{self.interface_name}\t>> [{packet.source.pretty} -> {packet.dest.pretty}] {packet}")
-        self.socket.sendall(packet.as_bytes())
+        self.socket.send(packet.as_bytes())
 
-        received = list()
-        start = time.time()
-        previous_timeout = self.socket.gettimeout()
-
-        while True:
-            elapsed = time.time() - start
-            if elapsed > self.timeout:
-                break
-
-            self.socket.settimeout(self.timeout - elapsed)
-            try:
-                message = self.socket.recv(4096)
-            except socket.timeout as exc:
-                break
-
+        PkgProcMode = Enum('PkgProcMode', ['FILTER', 'STOP'])
+        def process_packet(message, mode):
             recv_packet = ManagementMessage.from_bytes(message)
 
             if recv_packet.ethertype != packet.ethertype:
-                continue
+                return False
 
             if recv_packet.dest != packet.source:
                 if self.verbose:
                     print(f"Dropping packet as destination {recv_packet.dest.pretty} is incorrect")
-                continue
+                return False
 
             # If it was not sent to a broadcast address, also check the sender, which should match our original
             # destination MAC
             if packet.dest.address != "ffffffffffff":
                 if recv_packet.source != packet.dest:
-                    break
+                    return True if mode == PkgProcMode.STOP else False
 
             if recv_packet.mmbase == MMType.CM_MME_ERROR.value and recv_packet.subtype == MMSubtype.IND.value:
                 if self.verbose:
                     print(f"CM_MME_ERROR.IND: reason={MMError(recv_packet.mmentry[0]).name}")
-                continue
+                return False
 
             if recv_packet.mmbase == packet.mmbase:
                 if self.verbose:
                     print(f"{self.interface_name}\t<< [{recv_packet.source.pretty} -> {recv_packet.dest.pretty}] {recv_packet}")
-                received.append(recv_packet)
+                return False if mode == PkgProcMode.STOP else True
+            
+            return False
 
-        self.socket.settimeout(previous_timeout)
-        return received
+        def stop_sniff(packet):
+            return process_packet(bytes(packet), PkgProcMode.STOP)
+
+        def store_sniff(packet):
+            return process_packet(bytes(packet), PkgProcMode.FILTER)
+
+        
+        received = self.socket.sniff(lfilter=store_sniff, timeout=self.timeout, stop_filter=stop_sniff) #L2socket=None
+        return [ManagementMessage.from_bytes(bytes(p)) for p in received]
+
 
     def _hpav_discover(self, target: MacAddress = MacAddress("FF:FF:FF:FF:FF:FF")) -> (
                                                                 List[PowerlineDevice], List[HPAVDiscoverNetworkInfo]):

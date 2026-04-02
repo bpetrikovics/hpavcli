@@ -536,7 +536,8 @@ class PowerlineDevice:
     def __repr__(self):
         return f"<PowerlineDevice(iface={self.interface.interface_name}, " \
                f"av_version={HPAVVersion(self.hpav_version).name if self.hpav_version else 'N/A'}, " \
-               f"address={self.mac.pretty}, oui={self.oui.name if self.oui else 'N/A'})>"
+               f"address={self.mac.pretty}, oui={self.oui.name if self.oui else 'N/A'}, " \
+               f"hfid={self.hfid if self.hfid else 'N/A'})>"
 
     def add_station(self, sta: HPAVDiscoverStationInfo) -> None:
         self.sta_list.append(sta)

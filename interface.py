@@ -330,7 +330,7 @@ class PowerlineInterface:
             # Discover oui, so we can call the correct network info implementation
             self._hpav_station_caps(dev)
 
-            netdata = None
+            netdata = []
             if dev.oui == OUI.BROADCOM:
                 netdata = self._broadcom_network_info(dev, BroadcomNetworkInfoRequest.GET_NETWORK_ANY)
                 for net in netdata:
